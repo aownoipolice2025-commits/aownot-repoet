@@ -4,12 +4,24 @@ import { constantTimeEqual, replyJson } from './_shared.mjs';
 
 export default async (request) => {
   if (request.method !== 'POST') return replyJson({ error: 'Method not allowed' }, 405);
-  const secret = process.env.LINE_CHANNEL_SECRET;
+  const configuredSecret = process.env.LINE_CHANNEL_SECRET;
+  const secret = typeof configuredSecret === 'string' ? configuredSecret.trim() : '';
   if (!secret) return replyJson({ error: 'Missing LINE secret' }, 503);
   const raw = await request.text();
   const provided = request.headers.get('x-line-signature') || '';
   const expected = createHmac('sha256', secret).update(raw).digest('base64');
-  if (!constantTimeEqual(provided, expected)) return replyJson({ error: 'Invalid signature' }, 401);
+  if (!constantTimeEqual(provided, expected)) {
+    // These diagnostics contain no Channel secret, token, webhook body, or signature value.
+    console.error('[AOWNOI WEBHOOK] Signature verification failed', {
+      signaturePresent: Boolean(provided),
+      signatureLength: provided.length,
+      secretLength: secret.length,
+      channelSecretLooksLikeHex32: /^[a-f0-9]{32}$/i.test(secret),
+      removedOuterWhitespace: configuredSecret !== secret,
+      bodyByteLength: Buffer.byteLength(raw, 'utf8')
+    });
+    return replyJson({ error: 'Invalid signature' }, 401);
+  }
   let body;
   try { body = JSON.parse(raw); } catch { return replyJson({ error: 'Invalid JSON' }, 400); }
   const pair = process.env.LINE_PAIR_CODE;
